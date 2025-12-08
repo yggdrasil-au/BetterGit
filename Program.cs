@@ -18,7 +18,6 @@ class Program {
         try {
             switch (args[0].ToLower()) {
                 case "init":
-                    // usage: BetterGit.exe init "C:/Projects/MyNewGame" [--node]
                     // If no path provided, use current directory
                     String targetPath = Directory.GetCurrentDirectory();
                     Boolean isNode = false;
