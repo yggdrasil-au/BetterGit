@@ -1,0 +1,10 @@
+**/.history/
+**/.vscode/
+**/.vs/
+**/bin/
+**/obj/
+TestRepo/
+**/node_modules/
+**/publish/
+
+
