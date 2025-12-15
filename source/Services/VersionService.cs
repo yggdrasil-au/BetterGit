@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using Newtonsoft.Json;
 using Tomlyn;
 using Tomlyn.Model;
@@ -30,9 +31,10 @@ namespace BetterGit.Services {
             long major = 0, minor = 0, patch = 0;
             bool isAlpha = false;
             bool isBeta = false;
+            bool metaExists = File.Exists(metaFile);
 
             // 1. Read TOML
-            if (File.Exists(metaFile)) {
+            if (metaExists) {
                 try {
                     string content = File.ReadAllText(metaFile);
                     var model = Toml.ToModel(content);
@@ -48,6 +50,26 @@ namespace BetterGit.Services {
                         if (model.ContainsKey("isBeta")) isBeta = (bool)model["isBeta"];
                     }
                 } catch { /* Ignore corrupt, start from 0.0.0 */ }
+            } else {
+                // If meta doesn't exist, try to seed from package.json
+                string packageJsonPath = Path.Combine(_repoPath, "package.json");
+                if (File.Exists(packageJsonPath)) {
+                    try {
+                        string content = File.ReadAllText(packageJsonPath);
+                        dynamic? json = JsonConvert.DeserializeObject(content);
+                        if (json != null && json.version != null) {
+                            string v = json.version.ToString();
+                            // Handle suffixes
+                            if (v.EndsWith("-A")) { isAlpha = true; v = v.Substring(0, v.Length - 2); }
+                            else if (v.EndsWith("-B")) { isBeta = true; v = v.Substring(0, v.Length - 2); }
+                            
+                            var parts = v.Split('.');
+                            if (parts.Length >= 1) long.TryParse(parts[0], out major);
+                            if (parts.Length >= 2) long.TryParse(parts[1], out minor);
+                            if (parts.Length >= 3) long.TryParse(parts[2], out patch);
+                        }
+                    } catch { /* Ignore */ }
+                }
             }
 
             // 2. Increment Logic
@@ -77,16 +99,19 @@ namespace BetterGit.Services {
             if (isAlpha) versionString += "-A";
             else if (isBeta) versionString += "-B";
 
-            // 4. Update package.json if exists
-            string packageJsonPath = Path.Combine(_repoPath, "package.json");
-            if (File.Exists(packageJsonPath)) {
+            // 4. Update package.json if exists (Preserving Formatting)
+            string pkgPath = Path.Combine(_repoPath, "package.json");
+            if (File.Exists(pkgPath)) {
                 try {
-                    string content = File.ReadAllText(packageJsonPath);
-                    dynamic? json = JsonConvert.DeserializeObject(content);
-                    if (json != null) {
-                        json.version = versionString;
-                        File.WriteAllText(packageJsonPath, JsonConvert.SerializeObject(json, Formatting.Indented));
-                    }
+                    string content = File.ReadAllText(pkgPath);
+                    // Regex to find "version": "..." and replace it, preserving whitespace
+                    string pattern = "(\"version\"\\s*:\\s*\")(.*?)(\")";
+                    var regex = new Regex(pattern);
+                    
+                    // Only replace the first occurrence
+                    string newContent = regex.Replace(content, $"${{1}}{versionString}$3", 1);
+                    
+                    File.WriteAllText(pkgPath, newContent);
                 } catch { /* Ignore */ }
             }
 

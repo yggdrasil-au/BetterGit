@@ -281,9 +281,12 @@ namespace BetterGit.source {
             }
 
             using (Repository? repo = new Repository(_repoPath)) {
-                List<string>? changes = repo.RetrieveStatus()
+                var changes = repo.RetrieveStatus()
                                   .Where(s => s.State != FileStatus.Ignored)
-                                  .Select(s => Path.GetFileName(s.FilePath))
+                                  .Select(s => new {
+                                      path = s.FilePath,
+                                      status = s.State.ToString()
+                                  })
                                   .ToList();
 
                 var timeline = repo.Commits

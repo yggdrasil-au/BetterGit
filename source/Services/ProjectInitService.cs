@@ -25,8 +25,35 @@ namespace BetterGit.Services {
                 }
             }
 
-            // 3. Create the "BetterGit" Metadata (.betterGit/meta.toml)
-            // We set version to 0, so the first Save becomes v1
+            // 3. Handle Node.js package.json & Determine Initial Version
+            // If --node flag is passed OR package.json already exists
+            string packageJsonPath = Path.Combine(path, "package.json");
+            long major = 0, minor = 0, patch = 0;
+
+            if (File.Exists(packageJsonPath)) {
+                // Read existing version to sync meta.toml, but DO NOT modify package.json
+                try {
+                    string content = File.ReadAllText(packageJsonPath);
+                    dynamic? json = JsonConvert.DeserializeObject(content);
+                    if (json != null && json.version != null) {
+                        string v = json.version.ToString();
+                        var parts = v.Split('.');
+                        if (parts.Length >= 1) long.TryParse(parts[0], out major);
+                        if (parts.Length >= 2) long.TryParse(parts[1], out minor);
+                        if (parts.Length >= 3) long.TryParse(parts[2], out patch);
+                    }
+                } catch { /* Ignore corrupt package.json */ }
+            } else if (isNode) {
+                // Create new package.json
+                var pkg = new {
+                    name = new DirectoryInfo(path).Name.ToLower().Replace(" ", "-"),
+                    version = "0.0.0",
+                    description = "Initialized by BetterGit"
+                };
+                File.WriteAllText(packageJsonPath, JsonConvert.SerializeObject(pkg, Formatting.Indented));
+            }
+
+            // 4. Create the "BetterGit" Metadata (.betterGit/meta.toml)
             string betterGitDir = Path.Combine(path, ".betterGit");
             if (!Directory.Exists(betterGitDir)) {
                 Directory.CreateDirectory(betterGitDir);
@@ -35,32 +62,14 @@ namespace BetterGit.Services {
             string metaFile = Path.Combine(betterGitDir, "meta.toml");
 
             if (!File.Exists(metaFile)) {
-                var toml = new TomlTable { ["version"] = 0 };
+                var toml = new TomlTable {
+                    ["major"] = major,
+                    ["minor"] = minor,
+                    ["patch"] = patch,
+                    ["isAlpha"] = false,
+                    ["isBeta"] = false
+                };
                 File.WriteAllText(metaFile, Toml.FromModel(toml));
-            }
-
-            // 4. Handle Node.js package.json
-            // If --node flag is passed OR package.json already exists
-            string packageJsonPath = Path.Combine(path, "package.json");
-            if (isNode || File.Exists(packageJsonPath)) {
-                if (!File.Exists(packageJsonPath)) {
-                    var pkg = new {
-                        name = new DirectoryInfo(path).Name.ToLower().Replace(" ", "-"),
-                        version = "0.0.0",
-                        description = "Initialized by BetterGit"
-                    };
-                    File.WriteAllText(packageJsonPath, JsonConvert.SerializeObject(pkg, Formatting.Indented));
-                } else {
-                    // Ensure it has a version field if it exists
-                    try {
-                        string content = File.ReadAllText(packageJsonPath);
-                        dynamic? json = JsonConvert.DeserializeObject(content);
-                        if (json != null && json.version == null) {
-                            json.version = "0.0.0";
-                            File.WriteAllText(packageJsonPath, JsonConvert.SerializeObject(json, Formatting.Indented));
-                        }
-                    } catch { /* Ignore corrupt package.json */ }
-                }
             }
 
             // 5. Create a default .gitignore (Optional but recommended)
