@@ -1,6 +1,4 @@
-﻿using BetterGit.Services;
-using BetterGit.source;
-
+﻿
 namespace BetterGit;
 
 class Program {
