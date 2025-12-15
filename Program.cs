@@ -13,10 +13,23 @@ class Program {
         // VS Code sets the "Current Working Directory" to the user's project folder.
         // We use this to find the repository.
         String repoPath = Directory.GetCurrentDirectory();
+
+        // Check for --path argument
+        for (int i = 0; i < args.Length; i++) {
+            if (args[i] == "--path" && i + 1 < args.Length) {
+                repoPath = args[i + 1];
+                break;
+            }
+        }
+
         var manager = new RepositoryManager(repoPath);
 
         try {
             switch (args[0].ToLower()) {
+                case "scan-repos":
+                    Console.WriteLine(manager.ScanRepositories());
+                    break;
+
                 case "init":
                     // If no path provided, use current directory
                     String targetPath = Directory.GetCurrentDirectory();
@@ -84,6 +97,22 @@ class Program {
                 case "publish":
                     // usage: BetterGit.exe publish
                     manager.Publish();
+                    break;
+
+                case "merge":
+                    // usage: BetterGit.exe merge [sha]
+                    if (args.Length < 2) {
+                        throw new Exception("Source SHA required.");
+                    }
+                    manager.Merge(args[1]);
+                    break;
+
+                case "set-channel":
+                    // usage: BetterGit.exe set-channel [alpha|beta|stable]
+                    if (args.Length < 2) {
+                        throw new Exception("Channel required (alpha, beta, stable).");
+                    }
+                    manager.SetChannel(args[1]);
                     break;
 
                 default:
