@@ -380,39 +380,71 @@ public class RepositoryManager {
     }
 
     // --- COMMAND: SCAN-REPOS ---
+    private class RepoItem {
+        public string Name { get; set; } = string.Empty;
+        public string Path { get; set; } = string.Empty;
+        public string Type { get; set; } = string.Empty;
+        public List<RepoItem> Children { get; set; } = new List<RepoItem>();
+    }
+
     public string ScanRepositories() {
-        var submodules = new List<object>();
-        var nested = new List<object>();
+        var rootItem = GetRepoTree(_repoPath, _repoPath);
+        return JsonConvert.SerializeObject(rootItem, Formatting.Indented);
+    }
+
+    private RepoItem GetRepoTree(string currentPath, string rootPath) {
+        string relPath = Path.GetRelativePath(rootPath, currentPath);
+        if (relPath == ".") relPath = "";
+
+        var item = new RepoItem {
+            Name = Path.GetFileName(currentPath),
+            Path = relPath,
+            Type = (currentPath == rootPath) ? "root" : "nested"
+        };
+
         var knownPaths = new HashSet<string>();
 
-        // 1. Submodules (Only if root is a repo)
-        if (IsValidGitRepo()) {
+        // 1. Submodules (Only if it is a repo)
+        bool isValidRepo = false;
+        try {
+            isValidRepo = Repository.IsValid(currentPath);
+        } catch { 
+            // Ignore permission/ownership errors during validity check
+            isValidRepo = false; 
+        }
+
+        if (isValidRepo) {
             try {
-                using (var repo = new Repository(_repoPath)) {
+                using (var repo = new Repository(currentPath)) {
                     foreach (var sm in repo.Submodules) {
-                        // Requirement: Only show items that exist
-                        string fullPath = Path.Combine(_repoPath, sm.Path);
+                        string fullPath = Path.Combine(currentPath, sm.Path);
                         if (Directory.Exists(fullPath)) {
-                            submodules.Add(new { path = sm.Path, name = sm.Name });
+                            var smItem = GetRepoTree(fullPath, rootPath);
+                            smItem.Type = "submodule";
+                            smItem.Name = sm.Name;
+                            item.Children.Add(smItem);
+                            
                             knownPaths.Add(Path.GetFullPath(fullPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).ToLowerInvariant());
                         }
                     }
                 }
-            } catch { /* Ignore errors reading submodules */ }
+            } catch {}
         }
 
-        // 2. Nested Repos (Manual Scan)
-        // We scan up to depth 50, skipping common ignore folders
-        ScanDir(_repoPath, nested, knownPaths, 0);
+        // 2. Nested Repos
+        var nestedPaths = new List<string>();
+        ScanForNestedRepos(currentPath, nestedPaths, knownPaths, 0);
 
-        return JsonConvert.SerializeObject(new {
-            root = _repoPath,
-            submodules,
-            nested
-        }, Formatting.Indented);
+        foreach (var nestedPath in nestedPaths) {
+            var nestedItem = GetRepoTree(nestedPath, rootPath);
+            nestedItem.Type = "nested";
+            item.Children.Add(nestedItem);
+        }
+
+        return item;
     }
 
-    private void ScanDir(string dir, List<object> results, HashSet<string> knownPaths, int depth) {
+    private void ScanForNestedRepos(string dir, List<string> results, HashSet<string> knownPaths, int depth) {
         if (depth > 50) return;
 
         try {
@@ -435,16 +467,13 @@ public class RepositoryManager {
                         continue;
                     }
 
-                    // Calculate relative path
-                    string relPath = Path.GetRelativePath(_repoPath, d);
-                    results.Add(new { path = relPath, name = name });
-
+                    results.Add(d);
                     // Don't recurse into a repo
                     continue;
                 }
 
                 // Recurse
-                ScanDir(d, results, knownPaths, depth + 1);
+                ScanForNestedRepos(d, results, knownPaths, depth + 1);
             }
         } catch { /* Access denied etc */ }
     }
