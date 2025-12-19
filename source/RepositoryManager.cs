@@ -1,5 +1,6 @@
 using LibGit2Sharp;
 using Newtonsoft.Json;
+using System.Diagnostics;
 
 namespace BetterGit;
 
@@ -31,12 +32,20 @@ public class RepositoryManager {
         }
 
         using (Repository? repo = new Repository(_repoPath)) {
-            // 1. Stage all changes (Automatic "git add .")
-            Commands.Stage(repo, "*");
+            // 1. Stage all changes (Automatic "git add -A")
+            // LibGit2Sharp can throw on Windows when long paths exist (often in untracked files).
+            try {
+                Commands.Stage(repo, "*");
+            } catch (Exception ex) {
+                if (IsPathTooLongError(ex)) {
+                    RunGitOrThrow(_repoPath, "add -A");
+                } else {
+                    throw;
+                }
+            }
 
             // 2. Check if there is anything to commit
-            RepositoryStatus? status = repo.RetrieveStatus();
-            if (!status.IsDirty) {
+            if (!IsRepoDirtySafe(repo, _repoPath)) {
                 Console.WriteLine("No changes to save.");
                 return;
             }
@@ -44,20 +53,19 @@ public class RepositoryManager {
             // Auto-generate message if empty
             if (string.IsNullOrWhiteSpace(message)) {
                 var sb = new System.Text.StringBuilder();
-                sb.AppendLine($"changes: {status.Count()}");
+                var entries = GetChangesSafe(repo, _repoPath, includeUntracked: true);
+                sb.AppendLine($"changes: {entries.Count}");
                 sb.AppendLine();
                 sb.AppendLine("Files changed in this commit:");
 
-                foreach (var entry in status) {
-                    if (entry.State == FileStatus.Ignored) continue;
-
+                foreach (var entry in entries) {
                     string stateStr = "modified";
-                    string s = entry.State.ToString();
+                    string s = entry.status;
                     if (s.Contains("New") || s.Contains("Added")) stateStr = "added";
                     else if (s.Contains("Deleted")) stateStr = "deleted";
                     else if (s.Contains("Renamed")) stateStr = "renamed";
 
-                    sb.AppendLine($"\t{stateStr}:   {entry.FilePath}");
+                    sb.AppendLine($"\t{stateStr}:   {entry.path}");
                 }
                 message = sb.ToString();
             }
@@ -66,9 +74,25 @@ public class RepositoryManager {
             string version = _versionService.IncrementVersion(changeType);
 
             // Stage the metadata files explicitly to be sure
-            Commands.Stage(repo, ".betterGit/meta.toml");
+            try {
+                Commands.Stage(repo, ".betterGit/meta.toml");
+            } catch (Exception ex) {
+                if (IsPathTooLongError(ex)) {
+                    RunGitOrThrow(_repoPath, "add .betterGit/meta.toml");
+                } else {
+                    throw;
+                }
+            }
             if (File.Exists(Path.Combine(_repoPath, "package.json"))) {
-                Commands.Stage(repo, "package.json");
+                try {
+                    Commands.Stage(repo, "package.json");
+                } catch (Exception ex) {
+                    if (IsPathTooLongError(ex)) {
+                        RunGitOrThrow(_repoPath, "add package.json");
+                    } else {
+                        throw;
+                    }
+                }
             }
 
             // 4. Commit
@@ -247,10 +271,20 @@ public class RepositoryManager {
 
             // Fix: Revert changes to .betterGit folder to avoid version conflicts
             // We want to keep the current version, not the one from the merge source.
-            var betterGitFiles = repo.RetrieveStatus()
-                .Where(s => s.FilePath.Replace("\\", "/").StartsWith(".betterGit/"))
-                .Select(s => s.FilePath)
-                .ToList();
+            List<string> betterGitFiles;
+            try {
+                var opts = new StatusOptions {
+                    IncludeUntracked = false,
+                    RecurseUntrackedDirs = false
+                };
+                betterGitFiles = repo.RetrieveStatus(opts)
+                    .Where(s => s.FilePath.Replace("\\", "/").StartsWith(".betterGit/"))
+                    .Select(s => s.FilePath)
+                    .ToList();
+            } catch {
+                // If status fails (e.g., long path in untracked files), just skip this safety revert.
+                betterGitFiles = new List<string>();
+            }
 
             if (betterGitFiles.Any()) {
                 // Checkout from HEAD (current state), effectively ignoring the merge for these files
@@ -281,13 +315,9 @@ public class RepositoryManager {
         }
 
         using (Repository? repo = new Repository(_repoPath)) {
-            var changes = repo.RetrieveStatus()
-                                .Where(s => s.State != FileStatus.Ignored)
-                                .Select(s => new {
-                                    path = s.FilePath,
-                                    status = s.State.ToString()
-                                })
-                                .ToList();
+            var changes = GetChangesSafe(repo, _repoPath, includeUntracked: true)
+                .Select(s => new { path = s.path, status = s.status })
+                .ToList();
 
             var timeline = repo.Commits
                                 .Take(20)
@@ -359,17 +389,132 @@ public class RepositoryManager {
 
     private void EnsureSafeState() {
         using (Repository? repo = new Repository(_repoPath)) {
-            if (repo.RetrieveStatus().IsDirty) {
+            if (IsRepoDirtySafe(repo, _repoPath)) {
                 throw new Exception("Unsaved changes detected. You must 'Save' before moving or undoing.");
             }
         }
+    }
+
+    private static bool IsPathTooLongError(Exception ex) {
+        if (ex is PathTooLongException) return true;
+        var msg = ex.Message ?? string.Empty;
+        return msg.Contains("path too long", StringComparison.OrdinalIgnoreCase)
+               || msg.Contains("PathTooLong", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsRepoDirtySafe(Repository repo, string repoPath) {
+        try {
+            // Avoid untracked recursion which is where long-path failures most often occur.
+            var opts = new StatusOptions {
+                IncludeUntracked = false,
+                RecurseUntrackedDirs = false
+            };
+            return repo.RetrieveStatus(opts).IsDirty;
+        } catch (Exception ex) {
+            if (!IsPathTooLongError(ex)) throw;
+            // Fallback to git CLI, which can handle long paths if Git is configured appropriately.
+            var (exitCode, stdout, _) = RunGit(repoPath, "status --porcelain");
+            if (exitCode != 0) return true;
+            return !string.IsNullOrWhiteSpace(stdout);
+        }
+    }
+
+    private static List<(string path, string status)> GetChangesSafe(Repository repo, string repoPath, bool includeUntracked) {
+        try {
+            var opts = new StatusOptions {
+                IncludeUntracked = includeUntracked,
+                RecurseUntrackedDirs = includeUntracked
+            };
+
+            return repo.RetrieveStatus(opts)
+                .Where(s => s.State != FileStatus.Ignored)
+                .Select(s => (path: s.FilePath, status: s.State.ToString()))
+                .ToList();
+        } catch (Exception ex) {
+            if (!IsPathTooLongError(ex)) throw;
+
+            // Retry without untracked files (most common cause of long-path issues)
+            try {
+                var opts = new StatusOptions {
+                    IncludeUntracked = false,
+                    RecurseUntrackedDirs = false
+                };
+
+                return repo.RetrieveStatus(opts)
+                    .Where(s => s.State != FileStatus.Ignored)
+                    .Select(s => (path: s.FilePath, status: s.State.ToString()))
+                    .ToList();
+            } catch {
+                // Final fallback: git status porcelain
+                return GetChangesFromGit(repoPath);
+            }
+        }
+    }
+
+    private static List<(string path, string status)> GetChangesFromGit(string repoPath) {
+        var (exitCode, stdout, stderr) = RunGit(repoPath, "status --porcelain");
+        if (exitCode != 0) {
+            // If git itself errors, surface it as a pseudo change so the UI can still render something.
+            return new List<(string path, string status)> { (path: "(git)", status: $"Error: {stderr}".Trim()) };
+        }
+
+        var results = new List<(string path, string status)>();
+        foreach (var rawLine in stdout.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries)) {
+            var line = rawLine;
+            if (line.Length < 3) continue;
+
+            var code = line.Substring(0, 2);
+            var filePart = line.Length > 3 ? line.Substring(3) : string.Empty;
+            if (string.IsNullOrWhiteSpace(filePart)) continue;
+
+            // Handle renames like: R  old -> new
+            var arrowIdx = filePart.LastIndexOf("->", StringComparison.Ordinal);
+            var filePath = arrowIdx >= 0 ? filePart.Substring(arrowIdx + 2).Trim() : filePart.Trim();
+
+            string status;
+            if (code == "??") status = "New";
+            else if (code.Contains('D')) status = "Deleted";
+            else if (code.Contains('A')) status = "New";
+            else if (code.Contains('M')) status = "Modified";
+            else if (code.Contains('R')) status = "Renamed";
+            else status = "Changed";
+
+            results.Add((filePath, status));
+        }
+
+        return results;
+    }
+
+    private static void RunGitOrThrow(string repoPath, string args) {
+        var (exitCode, _, stderr) = RunGit(repoPath, args);
+        if (exitCode != 0) {
+            throw new Exception(string.IsNullOrWhiteSpace(stderr) ? "git command failed." : stderr.Trim());
+        }
+    }
+
+    private static (int exitCode, string stdout, string stderr) RunGit(string repoPath, string args) {
+        var psi = new ProcessStartInfo("git", args) {
+            WorkingDirectory = repoPath,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        using var process = Process.Start(psi);
+        if (process == null) return (1, string.Empty, "Failed to start git process.");
+
+        string stdout = process.StandardOutput.ReadToEnd();
+        string stderr = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        return (process.ExitCode, stdout, stderr);
     }
 
     private string ExtractVersion(string msg) {
         if (msg.StartsWith("[") && msg.Contains("]")) {
             return msg.Substring(1, msg.IndexOf("]") - 1);
         }
-        return "v?";
+        return "v?"; // no version exists, often means commit made outside BetterGit
     }
 
     private string ExtractMessage(string msg) {
@@ -387,12 +532,18 @@ public class RepositoryManager {
         public List<RepoItem> Children { get; set; } = new List<RepoItem>();
     }
 
-    public string ScanRepositories() {
-        var rootItem = GetRepoTree(_repoPath, _repoPath);
+    public string ScanRepositories(bool includeNested = true) {
+        var rootItem = GetRepoTree(_repoPath, _repoPath, includeNested);
         return JsonConvert.SerializeObject(rootItem, Formatting.Indented);
     }
 
-    private RepoItem GetRepoTree(string currentPath, string rootPath) {
+    // Returns ONLY non-submodule nested repos (lazy-load for UI).
+    public string ScanNestedRepositories() {
+        var nested = GetNestedReposExcludingSubmodules(_repoPath);
+        return JsonConvert.SerializeObject(nested, Formatting.Indented);
+    }
+
+    private RepoItem GetRepoTree(string currentPath, string rootPath, bool includeNested) {
         string relPath = Path.GetRelativePath(rootPath, currentPath);
         if (relPath == ".") relPath = "";
 
@@ -419,7 +570,7 @@ public class RepositoryManager {
                     foreach (var sm in repo.Submodules) {
                         string fullPath = Path.Combine(currentPath, sm.Path);
                         if (Directory.Exists(fullPath)) {
-                            var smItem = GetRepoTree(fullPath, rootPath);
+                            var smItem = GetRepoTree(fullPath, rootPath, includeNested);
                             smItem.Type = "submodule";
                             smItem.Name = sm.Name;
                             item.Children.Add(smItem);
@@ -432,13 +583,15 @@ public class RepositoryManager {
         }
 
         // 2. Nested Repos
-        var nestedPaths = new List<string>();
-        ScanForNestedRepos(currentPath, nestedPaths, knownPaths, 0);
+        if (includeNested) {
+            var nestedPaths = new List<string>();
+            ScanForNestedRepos(currentPath, nestedPaths, knownPaths, 0);
 
-        foreach (var nestedPath in nestedPaths) {
-            var nestedItem = GetRepoTree(nestedPath, rootPath);
-            nestedItem.Type = "nested";
-            item.Children.Add(nestedItem);
+            foreach (var nestedPath in nestedPaths) {
+                var nestedItem = GetRepoTree(nestedPath, rootPath, includeNested);
+                nestedItem.Type = "nested";
+                item.Children.Add(nestedItem);
+            }
         }
 
         return item;
@@ -476,5 +629,91 @@ public class RepositoryManager {
                 ScanForNestedRepos(d, results, knownPaths, depth + 1);
             }
         } catch { /* Access denied etc */ }
+    }
+
+    private List<RepoItem> GetNestedReposExcludingSubmodules(string rootPath) {
+        var submoduleRoots = CollectSubmoduleRootsRecursive(rootPath);
+        var results = new List<RepoItem>();
+
+        void Recurse(string dir, int depth) {
+            if (depth > 50) return;
+
+            try {
+                foreach (var d in Directory.GetDirectories(dir)) {
+                    var name = Path.GetFileName(d);
+
+                    // Skip common junk
+                    if (name.StartsWith(".") && name != ".git") continue;
+                    if (name == "node_modules" || name == "bin" || name == "obj" || name == "packages") continue;
+
+                    var full = Path.GetFullPath(d).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+                    // Don't scan inside submodules
+                    if (submoduleRoots.Any(sm => IsSameOrChildPath(full, sm))) {
+                        continue;
+                    }
+
+                    // Check if this is a git repo
+                    string gitPath = Path.Combine(d, ".git");
+                    if (Directory.Exists(gitPath) || File.Exists(gitPath)) {
+                        // Exclude the root repo itself
+                        if (!string.Equals(full, Path.GetFullPath(rootPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), StringComparison.OrdinalIgnoreCase)) {
+                            var rel = Path.GetRelativePath(rootPath, d);
+                            if (rel == ".") rel = "";
+                            results.Add(new RepoItem {
+                                Name = Path.GetFileName(d),
+                                Path = rel,
+                                Type = "nested",
+                                Children = new List<RepoItem>()
+                            });
+                        }
+                        // Don't recurse into a repo
+                        continue;
+                    }
+
+                    Recurse(d, depth + 1);
+                }
+            } catch {
+                // Access denied etc
+            }
+        }
+
+        Recurse(rootPath, 0);
+        return results;
+    }
+
+    private static bool IsSameOrChildPath(string candidate, string root) {
+        if (string.Equals(candidate, root, StringComparison.OrdinalIgnoreCase)) return true;
+        if (!candidate.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return false;
+        // ensure boundary
+        if (candidate.Length == root.Length) return true;
+        char c = candidate[root.Length];
+        return c == Path.DirectorySeparatorChar || c == Path.AltDirectorySeparatorChar;
+    }
+
+    private HashSet<string> CollectSubmoduleRootsRecursive(string rootPath) {
+        var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void Collect(string repoPath) {
+            bool isValid;
+            try { isValid = Repository.IsValid(repoPath); } catch { isValid = false; }
+            if (!isValid) return;
+
+            try {
+                using var repo = new Repository(repoPath);
+                foreach (var sm in repo.Submodules) {
+                    string fullPath = Path.GetFullPath(Path.Combine(repoPath, sm.Path))
+                        .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    if (Directory.Exists(fullPath) && roots.Add(fullPath)) {
+                        Collect(fullPath);
+                    }
+                }
+            } catch {
+                // ignore
+            }
+        }
+
+        Collect(rootPath);
+        return roots;
     }
 }

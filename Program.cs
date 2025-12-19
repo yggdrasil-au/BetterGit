@@ -25,7 +25,17 @@ class Program {
         try {
             switch (args[0].ToLower()) {
                 case "scan-repos":
-                    Console.WriteLine(manager.ScanRepositories());
+                    {
+                        // By default we include nested repos for backwards compatibility.
+                        // VS Code UI may pass --no-nested to avoid scanning until user expands "Other Modules".
+                        bool includeNested = !args.Any(a => a.Equals("--no-nested", StringComparison.OrdinalIgnoreCase));
+                        Console.WriteLine(manager.ScanRepositories(includeNested));
+                        break;
+                    }
+
+                case "scan-nested-repos":
+                    // usage: BetterGit.exe scan-nested-repos --path <root>
+                    Console.WriteLine(manager.ScanNestedRepositories());
                     break;
 
                 case "init":
