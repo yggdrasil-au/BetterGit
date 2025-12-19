@@ -1,6 +1,7 @@
 using LibGit2Sharp;
 using Newtonsoft.Json;
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 
 namespace BetterGit;
 
@@ -310,9 +311,13 @@ public class RepositoryManager {
                 isInitialized = false,
                 changes = new List<string>(),
                 timeline = new List<object>(),
-                archives = new List<object>()
+                archives = new List<object>(),
+                warnings = new List<string>()
             });
         }
+
+        var warnings = GetGitmodulesWarnings();
+        EmitWarningsToStderr(warnings);
 
         using (Repository? repo = new Repository(_repoPath)) {
             var changes = GetChangesSafe(repo, _repoPath, includeUntracked: true)
@@ -343,10 +348,145 @@ public class RepositoryManager {
                 isInitialized = true,
                 changes,
                 timeline,
-                archives
+                archives,
+                warnings
             };
 
             return JsonConvert.SerializeObject(data, Formatting.Indented);
+        }
+    }
+
+    private static readonly Regex GitmodulesSectionRegex = new(
+        "^\\s*\\[\\s*submodule\\s+\"(?<name>[^\"]+)\"\\s*\\]\\s*$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex GitmodulesKeyValueRegex = new(
+        "^\\s*(?<key>[A-Za-z0-9\\.\\-_]+)\\s*=\\s*(?<value>.*)\\s*$",
+        RegexOptions.Compiled);
+
+    private static string TrimGitmodulesValue(string value) {
+        var v = value.Trim();
+        if (v.Length >= 2 && ((v.StartsWith('"') && v.EndsWith('"')) || (v.StartsWith('\'') && v.EndsWith('\'')))) {
+            v = v.Substring(1, v.Length - 2);
+        }
+        return v.Trim();
+    }
+
+    private static string NormalizeGitmodulesPath(string raw) {
+        var p = raw.Trim();
+        p = p.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar);
+        p = p.TrimEnd(Path.DirectorySeparatorChar);
+        return p;
+    }
+
+    private List<string> GetGitmodulesWarnings() {
+        var warnings = new List<string>();
+        var gitmodulesPath = Path.Combine(_repoPath, ".gitmodules");
+        if (!File.Exists(gitmodulesPath)) return warnings;
+
+        string[] lines;
+        try {
+            lines = File.ReadAllLines(gitmodulesPath);
+        } catch (Exception ex) {
+            warnings.Add($".gitmodules: failed to read file: {ex.Message}");
+            return warnings;
+        }
+
+        string? currentName = null;
+        var current = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        bool parsedAnySection = false;
+
+        void FinalizeCurrent() {
+            if (currentName == null) return;
+            parsedAnySection = true;
+
+            current.TryGetValue("path", out var rawPath);
+            current.TryGetValue("url", out var url);
+
+            if (string.IsNullOrWhiteSpace(rawPath)) {
+                warnings.Add($".gitmodules: submodule \"{currentName}\" is missing required key: path");
+                return;
+            }
+
+            var relPath = NormalizeGitmodulesPath(rawPath);
+            if (string.IsNullOrWhiteSpace(relPath)) {
+                warnings.Add($".gitmodules: submodule \"{currentName}\" has an empty/invalid path value");
+                return;
+            }
+
+            string repoRootFull;
+            string subAbsFull;
+            try {
+                repoRootFull = Path.GetFullPath(_repoPath.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar);
+                subAbsFull = Path.GetFullPath(Path.Combine(_repoPath, relPath));
+            } catch (Exception ex) {
+                warnings.Add($".gitmodules: submodule \"{currentName}\" path \"{rawPath}\" could not be resolved: {ex.Message}");
+                return;
+            }
+
+            if (!subAbsFull.StartsWith(repoRootFull, StringComparison.OrdinalIgnoreCase)) {
+                warnings.Add($".gitmodules: submodule \"{currentName}\" path \"{rawPath}\" resolves outside repo root (ignored)");
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(url)) {
+                warnings.Add($".gitmodules: submodule \"{currentName}\" path \"{rawPath}\" is missing key: url");
+            }
+
+            if (!Directory.Exists(subAbsFull)) {
+                warnings.Add($".gitmodules: submodule \"{currentName}\" path \"{rawPath}\" not found on disk (not initialized or incorrect)");
+                return;
+            }
+
+            var dotGit = Path.Combine(subAbsFull, ".git");
+            if (!File.Exists(dotGit) && !Directory.Exists(dotGit)) {
+                warnings.Add($".gitmodules: submodule \"{currentName}\" path \"{rawPath}\" exists but is not a git repo (missing .git)");
+            }
+        }
+
+        for (int i = 0; i < lines.Length; i++) {
+            var line = lines[i];
+            var trimmed = line.Trim();
+
+            if (trimmed.Length == 0) continue;
+            if (trimmed.StartsWith("#") || trimmed.StartsWith(";")) continue;
+
+            var sec = GitmodulesSectionRegex.Match(line);
+            if (sec.Success) {
+                FinalizeCurrent();
+                currentName = sec.Groups["name"].Value.Trim();
+                current.Clear();
+                continue;
+            }
+
+            var kv = GitmodulesKeyValueRegex.Match(line);
+            if (kv.Success) {
+                if (currentName == null) {
+                    warnings.Add($".gitmodules: key/value outside any [submodule] section at line {i + 1}: {trimmed}");
+                    continue;
+                }
+
+                var key = kv.Groups["key"].Value.Trim();
+                var value = TrimGitmodulesValue(kv.Groups["value"].Value);
+                current[key] = value;
+                continue;
+            }
+
+            warnings.Add($".gitmodules: syntax error at line {i + 1}: {trimmed}");
+        }
+
+        FinalizeCurrent();
+
+        if (!parsedAnySection) {
+            warnings.Add(".gitmodules: file present but no [submodule \"...\"] sections could be parsed");
+        }
+
+        return warnings;
+    }
+
+    private static void EmitWarningsToStderr(IEnumerable<string> warnings) {
+        foreach (var w in warnings) {
+            Console.Error.WriteLine($"[WARN] {w}");
         }
     }
 
