@@ -324,6 +324,24 @@ public class RepositoryManager {
                 .Select(s => new { path = s.path, status = s.status })
                 .ToList();
 
+            bool hasUpstream = false;
+            int aheadBy = 0;
+            int behindBy = 0;
+            bool isPublishPending = false;
+            string? upstream = null;
+
+            try {
+                hasUpstream = repo.Head.IsTracking && repo.Head.TrackedBranch != null;
+                if (hasUpstream) {
+                    upstream = repo.Head.TrackedBranch.FriendlyName;
+                    aheadBy = repo.Head.TrackingDetails.AheadBy ?? 0;
+                    behindBy = repo.Head.TrackingDetails.BehindBy ?? 0;
+                    isPublishPending = aheadBy > 0;
+                }
+            } catch {
+                // ignore tracking failures
+            }
+
             var timeline = repo.Commits
                                 .Take(20)
                                 .Select(c => new {
@@ -349,7 +367,14 @@ public class RepositoryManager {
                 changes,
                 timeline,
                 archives,
-                warnings
+                warnings,
+                publish = new {
+                    hasUpstream,
+                    upstream,
+                    aheadBy,
+                    behindBy,
+                    isPublishPending
+                }
             };
 
             return JsonConvert.SerializeObject(data, Formatting.Indented);
