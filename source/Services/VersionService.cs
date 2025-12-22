@@ -22,23 +22,27 @@ public class VersionService : IVersionService {
     /* :: :: Methods :: START :: */
 
     public (long Major, long Minor, long Patch, bool IsAlpha, bool IsBeta) GetCurrentVersion() {
-        var state = ReadCurrentVersionState();
+        (long Major, long Minor, long Patch, bool IsAlpha, bool IsBeta, bool IsNodeProject) state = ReadCurrentVersionState();
         return (state.Major, state.Minor, state.Patch, state.IsAlpha, state.IsBeta);
     }
 
     private (long Major, long Minor, long Patch, bool IsAlpha, bool IsBeta, bool IsNodeProject) ReadCurrentVersionState() {
-        string betterGitDir = Path.Combine(_repoPath, ".betterGit");
-        string metaFile = Path.Combine(betterGitDir, "meta.toml");
+        BetterGitConfigPaths.MigrateMetaTomlToProjectTomlIfNeeded(_repoPath);
+
+        string projectFile = BetterGitConfigPaths.GetProjectTomlPath(_repoPath);
+        string legacyMetaFile = BetterGitConfigPaths.GetLegacyMetaTomlPath(_repoPath);
         long major = 0, minor = 0, patch = 0;
         bool isAlpha = false;
         bool isBeta = false;
         bool isNodeProject = false;
-        bool metaExists = File.Exists(metaFile);
+        bool projectExists = File.Exists(projectFile);
+        bool legacyExists = File.Exists(legacyMetaFile);
 
         // 1. Read TOML
-        if (metaExists) {
+        string? fileToRead = projectExists ? projectFile : (legacyExists ? legacyMetaFile : null);
+        if (fileToRead != null) {
             try {
-                string content = File.ReadAllText(metaFile);
+                string content = File.ReadAllText(fileToRead);
                 TomlTable model = Toml.ToModel(content);
                 
                 if (model.ContainsKey("version") && !model.ContainsKey("patch")) {
@@ -56,7 +60,7 @@ public class VersionService : IVersionService {
 
         // 1b. Sync with package.json if needed
         string packageJsonPath = Path.Combine(_repoPath, "package.json");
-        if (isNodeProject || (!metaExists && File.Exists(packageJsonPath))) {
+        if (isNodeProject || ((!projectExists && !legacyExists) && File.Exists(packageJsonPath))) {
              if (File.Exists(packageJsonPath)) {
                 try {
                     string content = File.ReadAllText(packageJsonPath);
@@ -106,20 +110,20 @@ public class VersionService : IVersionService {
     }
 
     public string IncrementVersion(VersionChangeType changeType = VersionChangeType.Patch, string? manualVersion = null) {
-        // This creates/updates a '.betterGit/meta.toml' file
-        string betterGitDir = Path.Combine(_repoPath, ".betterGit");
-        if (!Directory.Exists(betterGitDir)) {
-            Directory.CreateDirectory(betterGitDir);
-        }
+        // This creates/updates a '.betterGit/project.toml' file (public/committed)
+        BetterGitConfigPaths.MigrateMetaTomlToProjectTomlIfNeeded(_repoPath);
+        BetterGitConfigPaths.EnsureBetterGitDirExists(_repoPath);
 
-        var state = ReadCurrentVersionState();
+        (long Major, long Minor, long Patch, bool IsAlpha, bool IsBeta, bool IsNodeProject) state = ReadCurrentVersionState();
         long major = state.Major;
         long minor = state.Minor;
         long patch = state.Patch;
         bool isAlpha = state.IsAlpha;
         bool isBeta = state.IsBeta;
         bool isNodeProject = state.IsNodeProject;
-        string metaFile = Path.Combine(betterGitDir, "meta.toml");
+
+        string projectFile = BetterGitConfigPaths.GetProjectTomlPath(_repoPath);
+        TomlTable toml = ReadProjectTomlModel(projectFile);
 
         // 2. Increment Logic
         if (changeType == VersionChangeType.Manual && !string.IsNullOrWhiteSpace(manualVersion)) {
@@ -154,15 +158,13 @@ public class VersionService : IVersionService {
         // If None, do nothing
 
         // 3. Write TOML
-        TomlTable toml = new TomlTable {
-            ["major"] = major,
-            ["minor"] = minor,
-            ["patch"] = patch,
-            ["isAlpha"] = isAlpha,
-            ["isBeta"] = isBeta,
-            ["isNodeProject"] = isNodeProject
-        };
-        File.WriteAllText(metaFile, Toml.FromModel(toml));
+        toml["major"] = major;
+        toml["minor"] = minor;
+        toml["patch"] = patch;
+        toml["isAlpha"] = isAlpha;
+        toml["isBeta"] = isBeta;
+        toml["isNodeProject"] = isNodeProject;
+        File.WriteAllText(projectFile, Toml.FromModel(toml));
 
         string versionString = $"{major}.{minor}.{patch}";
         if (isAlpha) versionString += "-A";
@@ -188,24 +190,11 @@ public class VersionService : IVersionService {
     }
 
     public void SetChannel(string channel) {
-        string betterGitDir = Path.Combine(_repoPath, ".betterGit");
-        if (!Directory.Exists(betterGitDir)) {
-            Directory.CreateDirectory(betterGitDir);
-        }
+        BetterGitConfigPaths.MigrateMetaTomlToProjectTomlIfNeeded(_repoPath);
+        BetterGitConfigPaths.EnsureBetterGitDirExists(_repoPath);
 
-        string metaFile = Path.Combine(betterGitDir, "meta.toml");
-        TomlTable toml = new TomlTable();
-
-        // Read existing to preserve version numbers
-        if (File.Exists(metaFile)) {
-            try {
-                string content = File.ReadAllText(metaFile);
-                TomlTable model = Toml.ToModel(content);
-                foreach (KeyValuePair<string, object> kvp in model) {
-                    toml[kvp.Key] = kvp.Value;
-                }
-            } catch { }
-        }
+        string projectFile = BetterGitConfigPaths.GetProjectTomlPath(_repoPath);
+        TomlTable toml = ReadProjectTomlModel(projectFile);
 
         // Update flags
         toml["isAlpha"] = false;
@@ -217,10 +206,27 @@ public class VersionService : IVersionService {
             toml["isBeta"] = true;
         }
 
-        File.WriteAllText(metaFile, Toml.FromModel(toml));
+        File.WriteAllText(projectFile, Toml.FromModel(toml));
         Console.WriteLine($"Channel set to: {channel}");
     }
 
     /* :: :: Methods :: END :: */
-}
 
+    private static TomlTable ReadProjectTomlModel(string projectTomlPath) {
+        if (!File.Exists(projectTomlPath)) {
+            return new TomlTable();
+        }
+
+        try {
+            string content = File.ReadAllText(projectTomlPath);
+            TomlTable model = Toml.ToModel(content);
+            TomlTable copy = new TomlTable();
+            foreach (KeyValuePair<string, object> kvp in model) {
+                copy[kvp.Key] = kvp.Value;
+            }
+            return copy;
+        } catch {
+            return new TomlTable();
+        }
+    }
+}

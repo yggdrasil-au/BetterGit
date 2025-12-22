@@ -116,9 +116,91 @@ class Program {
                     break;
 
                 case "publish":
-                    // usage: BetterGit.exe publish
-                    manager.Publish();
+                    // usage: BetterGit.exe publish [--group <name>] [--public|--private]
+                    string? publishGroup = null;
+                    bool? publishPublic = null;
+
+                    for (int i = 1; i < args.Length; i++) {
+                        if (args[i].Equals("--group", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length) {
+                            publishGroup = args[i + 1];
+                            i++;
+                            continue;
+                        }
+                        if (args[i].Equals("--public", StringComparison.OrdinalIgnoreCase)) {
+                            publishPublic = true;
+                            continue;
+                        }
+                        if (args[i].Equals("--private", StringComparison.OrdinalIgnoreCase)) {
+                            publishPublic = false;
+                            continue;
+                        }
+                    }
+
+                    manager.Publish(publishGroup, publishPublic);
                     break;
+
+                case "remote":
+                    // usage:
+                    //   BetterGit.exe remote list [--json]
+                    //   BetterGit.exe remote set-meta <name> [--group <g>] [--provider <p>] [--public|--private]
+                    if (args.Length < 2) {
+                        throw new Exception("Remote subcommand required (list, set-meta).");
+                    }
+
+                    string sub = args[1].ToLowerInvariant();
+                    if (sub == "list") {
+                        bool asJson = args.Any(a => a.Equals("--json", StringComparison.OrdinalIgnoreCase));
+                        if (asJson) {
+                            Console.WriteLine(manager.GetRemotesJson());
+                        } else {
+                            List<RemoteInfo> remotes = manager.ListRemotes();
+                            foreach (RemoteInfo r in remotes) {
+                                string url = !string.IsNullOrWhiteSpace(r.PushUrl) ? r.PushUrl! : (r.FetchUrl ?? "(no url)");
+                                string pub = r.IsPublic ? "public" : "private";
+                                string status = r.IsMisconfigured ? "MISCONFIGURED" : (r.HasMetadata ? "managed" : "unmanaged");
+                                Console.WriteLine($"{r.Name} [{status}] ({r.Provider}) ({r.Group}) ({pub}) -> {url}");
+                            }
+                        }
+                        break;
+                    }
+
+                    if (sub == "set-meta") {
+                        if (args.Length < 3) {
+                            throw new Exception("Remote name required.");
+                        }
+
+                        string remoteName = args[2];
+                        string? group = null;
+                        string? provider = null;
+                        bool? isPublic = null;
+
+                        for (int i = 3; i < args.Length; i++) {
+                            if (args[i].Equals("--group", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length) {
+                                group = args[i + 1];
+                                i++;
+                                continue;
+                            }
+                            if (args[i].Equals("--provider", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length) {
+                                provider = args[i + 1];
+                                i++;
+                                continue;
+                            }
+                            if (args[i].Equals("--public", StringComparison.OrdinalIgnoreCase)) {
+                                isPublic = true;
+                                continue;
+                            }
+                            if (args[i].Equals("--private", StringComparison.OrdinalIgnoreCase)) {
+                                isPublic = false;
+                                continue;
+                            }
+                        }
+
+                        manager.SetRemoteMetadata(remoteName, group, provider, isPublic);
+                        Console.WriteLine($"Updated metadata for remote: {remoteName}");
+                        break;
+                    }
+
+                    throw new Exception($"Unknown remote subcommand: {args[1]}");
 
                 case "merge":
                     // usage: BetterGit.exe merge [sha]
@@ -168,6 +250,9 @@ class Program {
         Console.WriteLine("  restore <sha>          Restore a specific state");
         Console.WriteLine("  get-tree-data          Output JSON history tree");
         Console.WriteLine("  cat-file <sha> <path>  Print file content");
+        Console.WriteLine("  publish [--group <g>] [--public|--private]  Push current branch");
+        Console.WriteLine("  remote list [--json]   List Git remotes + metadata");
+        Console.WriteLine("  remote set-meta <name> [--group <g>] [--provider <p>] [--public|--private]  Update metadata");
         Console.WriteLine("  -h, --help             Show this help message");
     }
 

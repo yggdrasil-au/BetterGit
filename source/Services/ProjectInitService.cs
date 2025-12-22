@@ -33,9 +33,10 @@ public class ProjectInitService {
         // If --node flag is passed OR package.json already exists
         string packageJsonPath = Path.Combine(path, "package.json");
         long major = 0, minor = 0, patch = 0;
+        bool isNodeProject = isNode;
 
         if (File.Exists(packageJsonPath)) {
-            // Read existing version to sync meta.toml, but DO NOT modify package.json
+            // Read existing version to sync project.toml, but DO NOT modify package.json
             try {
                 string content = File.ReadAllText(packageJsonPath);
                 JObject? json = JsonConvert.DeserializeObject<JObject>(content);
@@ -48,6 +49,7 @@ public class ProjectInitService {
                     if (parts.Length >= 3) long.TryParse(parts[2], out patch);
                 }
             } catch { /* Ignore corrupt package.json */ }
+            isNodeProject = true;
         } else if (isNode) {
             // Create new package.json
             JObject pkg = new JObject {
@@ -56,39 +58,58 @@ public class ProjectInitService {
                 ["description"] = "Initialized by BetterGit"
             };
             File.WriteAllText(packageJsonPath, JsonConvert.SerializeObject(value: pkg, formatting: Formatting.Indented));
+            isNodeProject = true;
         }
 
-        // 4. Create the "BetterGit" Metadata (.betterGit/meta.toml)
-        string betterGitDir = Path.Combine(path, ".betterGit");
-        if (!Directory.Exists(betterGitDir)) {
-            Directory.CreateDirectory(betterGitDir);
-        }
+        // 4. Create the BetterGit config folder + TOML files.
+        BetterGitConfigPaths.MigrateMetaTomlToProjectTomlIfNeeded(path);
+        BetterGitConfigPaths.EnsureBetterGitDirExists(path);
 
-        string metaFile = Path.Combine(betterGitDir, "meta.toml");
-
-        if (!File.Exists(metaFile)) {
+        string projectFile = BetterGitConfigPaths.GetProjectTomlPath(path);
+        if (!File.Exists(projectFile)) {
             TomlTable toml = new TomlTable {
                 ["major"] = major,
                 ["minor"] = minor,
                 ["patch"] = patch,
                 ["isAlpha"] = false,
                 ["isBeta"] = false,
-                ["isNodeProject"] = isNode || File.Exists(packageJsonPath)
+                ["isNodeProject"] = isNodeProject
             };
-            File.WriteAllText(metaFile, Toml.FromModel(toml));
+            File.WriteAllText(projectFile, Toml.FromModel(toml));
         }
 
-        // 5. Create a default .gitignore (Optional but recommended)
+        // Local-only settings and credentials should never be committed.
+        string localFile = BetterGitConfigPaths.GetLocalTomlPath(path);
+        if (!File.Exists(localFile)) {
+            string localTemplate =
+                "# BetterGit local configuration (ignored by git)\n" +
+                "# User preferences live here (e.g., default publish group).\n";
+            File.WriteAllText(localFile, localTemplate);
+        }
+
+        string secretsFile = BetterGitConfigPaths.GetSecretsTomlPath(path);
+        if (!File.Exists(secretsFile)) {
+            string secretsTemplate =
+                "# BetterGit secrets (ignored by git)\n" +
+                "# Store credentials here (e.g., provider tokens) - never commit this file.\n";
+            File.WriteAllText(secretsFile, secretsTemplate);
+        }
+
+        // 5. Ensure .gitignore contains BetterGit ignore rules (recommended)
         string ignoreFile = Path.Combine(path, ".gitignore");
         if (!File.Exists(ignoreFile)) {
             // Ignore the .vs folder, bin/obj, and the archive branches metadata if you ever store it in files
             // Also ignore node_modules if node
             string ignores = "bin/\nobj/\n.vscode/\n";
-            if (isNode) {
+            if (isNodeProject) {
                 ignores += "node_modules/\n";
             }
 
+            ignores += ".betterGit/local.toml\n";
+            ignores += ".betterGit/secrets.toml\n";
             File.WriteAllText(ignoreFile, ignores);
+        } else {
+            EnsureGitignoreRules(ignoreFile, new[] { ".betterGit/local.toml", ".betterGit/secrets.toml" });
         }
 
         Console.WriteLine($"BetterGit initialized in: {path}");
@@ -96,5 +117,43 @@ public class ProjectInitService {
     }
 
     /* :: :: Public API :: END :: */
-}
 
+    private static void EnsureGitignoreRules(string gitignorePath, IReadOnlyList<string> rules) {
+        string content;
+        try {
+            content = File.ReadAllText(gitignorePath);
+        } catch {
+            return;
+        }
+
+        string normalized = content.Replace("\r\n", "\n");
+        HashSet<string> existing = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string line in normalized.Split('\n')) {
+            string trimmed = line.Trim();
+            if (trimmed.Length > 0) {
+                existing.Add(trimmed);
+            }
+        }
+
+        List<string> missing = new List<string>();
+        foreach (string rule in rules) {
+            if (!existing.Contains(rule)) {
+                missing.Add(rule);
+            }
+        }
+        if (missing.Count == 0) {
+            return;
+        }
+
+        using (StreamWriter writer = new StreamWriter(gitignorePath, append: true)) {
+            if (!normalized.EndsWith("\n")) {
+                writer.WriteLine();
+            }
+            writer.WriteLine();
+            writer.WriteLine("# BetterGit (local/private files)");
+            foreach (string rule in missing) {
+                writer.WriteLine(rule);
+            }
+        }
+    }
+}

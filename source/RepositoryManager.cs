@@ -8,6 +8,7 @@ public partial class RepositoryManager {
 
     private readonly string _repoPath;
     private readonly IVersionService _versionService;
+    private readonly RemoteService _remoteService;
 
     /* :: :: Fields :: END :: */
     // //
@@ -16,6 +17,7 @@ public partial class RepositoryManager {
     public RepositoryManager(string path) {
         _repoPath = path;
         _versionService = new VersionService(path);
+        _remoteService = new RemoteService(path);
     }
 
     /* :: :: Constructors :: END :: */

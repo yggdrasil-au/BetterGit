@@ -24,7 +24,7 @@ public partial class RepositoryManager {
         List<string> warnings = GetGitmodulesWarnings();
         EmitWarningsToStderr(warnings);
 
-        using (Repository? repo = new Repository(_repoPath)) {
+        using (Repository repo = new Repository(_repoPath)) {
             var changes = GetChangesSafe(repo, _repoPath, includeUntracked: true)
                 .Select(s => new { path = s.path, status = s.status })
                 .ToList();
@@ -36,9 +36,10 @@ public partial class RepositoryManager {
             string? upstream = null;
 
             try {
-                hasUpstream = repo.Head.IsTracking && repo.Head.TrackedBranch != null;
-                if (hasUpstream) {
-                    upstream = repo.Head.TrackedBranch.FriendlyName;
+                Branch? tracked = repo.Head.TrackedBranch;
+                hasUpstream = repo.Head.IsTracking && tracked != null;
+                if (hasUpstream && tracked != null) {
+                    upstream = tracked.FriendlyName;
                     aheadBy = repo.Head.TrackingDetails.AheadBy ?? 0;
                     behindBy = repo.Head.TrackingDetails.BehindBy ?? 0;
                     isPublishPending = aheadBy > 0;
@@ -67,12 +68,31 @@ public partial class RepositoryManager {
                                 .OrderByDescending(x => x.name)
                                 .ToList();
 
+            List<RemoteInfo> remotes = new List<RemoteInfo>();
+            try {
+                remotes = _remoteService.ListMergedRemotes(repo);
+            } catch {
+                // If remotes fail to load (corrupt config, libgit2 issue), keep the UI usable.
+                remotes = new List<RemoteInfo>();
+            }
+
             var data = new {
                 isInitialized = true,
                 changes,
                 timeline,
                 archives,
                 warnings,
+                remotes = remotes.Select(r => new {
+                    name = r.Name,
+                    fetchUrl = r.FetchUrl,
+                    pushUrl = r.PushUrl,
+                    group = r.Group,
+                    provider = r.Provider,
+                    isPublic = r.IsPublic,
+                    hasGitRemote = r.HasGitRemote,
+                    hasMetadata = r.HasMetadata,
+                    isMisconfigured = r.IsMisconfigured
+                }).ToList(),
                 publish = new {
                     hasUpstream,
                     upstream,

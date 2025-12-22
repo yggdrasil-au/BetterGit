@@ -59,10 +59,10 @@ public partial class RepositoryManager {
 
             // Stage the metadata files explicitly to be sure
             try {
-                Commands.Stage(repo, ".betterGit/meta.toml");
+                Commands.Stage(repo, ".betterGit/project.toml");
             } catch (Exception ex) {
                 if (IsPathTooLongError(ex)) {
-                    RunGitOrThrow(_repoPath, "add .betterGit/meta.toml");
+                    RunGitOrThrow(_repoPath, "add .betterGit/project.toml");
                 } else {
                     throw;
                 }
