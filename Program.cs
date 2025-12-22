@@ -58,16 +58,27 @@ class Program {
                     break;
 
                 case "save":
-                    // usage: BetterGit.exe save "My commit message" [--major|--minor|--patch]
+                    // usage: BetterGit.exe save "My commit message" [--major|--minor|--patch|--no-increment|--set-version <v>]
                     if (args.Length < 2) {
                         throw new Exception("Message required.");
                     }
 
                     VersionChangeType changeType = VersionChangeType.Patch;
+                    string? manualVersion = null;
+
                     if (args.Contains("--major")) changeType = VersionChangeType.Major;
                     else if (args.Contains("--minor")) changeType = VersionChangeType.Minor;
+                    else if (args.Contains("--no-increment")) changeType = VersionChangeType.None;
 
-                    manager.Save(args[1], changeType);
+                    // Check for --set-version
+                    for (int i = 0; i < args.Length; i++) {
+                        if (args[i] == "--set-version" && i + 1 < args.Length) {
+                            changeType = VersionChangeType.Manual;
+                            manualVersion = args[i + 1];
+                        }
+                    }
+
+                    manager.Save(args[1], changeType, manualVersion);
                     break;
 
                 case "undo":
@@ -123,6 +134,11 @@ class Program {
                         throw new Exception("Channel required (alpha, beta, stable).");
                     }
                     manager.SetChannel(args[1]);
+                    break;
+
+                case "get-version-info":
+                    // usage: BetterGit.exe get-version-info
+                    Console.WriteLine(manager.GetVersionInfo());
                     break;
 
                 default:

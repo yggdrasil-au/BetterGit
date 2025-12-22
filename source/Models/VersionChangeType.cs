@@ -3,6 +3,8 @@ namespace BetterGit;
 public enum VersionChangeType {
     Patch,
     Minor,
-    Major
+    Major,
+    None,
+    Manual
 }
 

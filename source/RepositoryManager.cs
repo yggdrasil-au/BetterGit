@@ -1,4 +1,5 @@
 using LibGit2Sharp;
+using Newtonsoft.Json;
 
 namespace BetterGit;
 
@@ -31,6 +32,26 @@ public partial class RepositoryManager {
 
     public void SetChannel(string channel) {
         _versionService.SetChannel(channel);
+    }
+
+    public string GetVersionInfo() {
+        var v = _versionService.GetCurrentVersion();
+        string current = $"{v.Major}.{v.Minor}.{v.Patch}";
+        if (v.IsAlpha) current += "-A";
+        else if (v.IsBeta) current += "-B";
+
+        string last = "None";
+        if (IsValidGitRepo()) {
+            using (Repository repo = new Repository(_repoPath)) {
+                var tip = repo.Head.Tip;
+                if (tip != null) {
+                     last = ExtractVersion(tip.Message);
+                     if (string.IsNullOrEmpty(last) || last == "v?") last = "None";
+                }
+            }
+        }
+        
+        return JsonConvert.SerializeObject(new { currentVersion = current, lastCommitVersion = last });
     }
 
     /* :: :: Public API :: END :: */

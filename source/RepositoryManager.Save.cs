@@ -6,7 +6,7 @@ public partial class RepositoryManager {
     /* :: :: Commands :: START :: */
 
     // --- COMMAND: SAVE ---
-    public void Save(string message, VersionChangeType changeType = VersionChangeType.Patch) {
+    public void Save(string message, VersionChangeType changeType = VersionChangeType.Patch, string? manualVersion = null) {
         if (!IsValidGitRepo()) {
             throw new Exception("Not a valid BetterGit repository. Run 'init' first.");
         }
@@ -55,7 +55,7 @@ public partial class RepositoryManager {
             }
 
             // 3. Update Version
-            string version = _versionService.IncrementVersion(changeType);
+            string version = _versionService.IncrementVersion(changeType, manualVersion);
 
             // Stage the metadata files explicitly to be sure
             try {

@@ -72,7 +72,8 @@ public class ProjectInitService {
                 ["minor"] = minor,
                 ["patch"] = patch,
                 ["isAlpha"] = false,
-                ["isBeta"] = false
+                ["isBeta"] = false,
+                ["isNodeProject"] = isNode || File.Exists(packageJsonPath)
             };
             File.WriteAllText(metaFile, Toml.FromModel(toml));
         }

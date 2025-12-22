@@ -153,7 +153,7 @@ public partial class RepositoryManager {
 
     }
 
-    private string ExtractVersion(string msg) {
+    internal string ExtractVersion(string msg) {
         if (msg.StartsWith("[") && msg.Contains("]")) {
             return msg.Substring(1, msg.IndexOf("]") - 1);
         }
