@@ -1,13 +1,16 @@
-using System;
-using System.IO;
 using LibGit2Sharp;
+
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+
 using Tomlyn;
 using Tomlyn.Model;
 
 namespace BetterGit;
 
 public class ProjectInitService {
+    /* :: :: Public API :: START :: */
+
     public static void InitProject(string path, bool isNode = false) {
         // 1. Create Directory if it doesn't exist
         if (!Directory.Exists(path)) {
@@ -18,7 +21,7 @@ public class ProjectInitService {
         // This is safe: if a repo already exists, it just re-initializes it without deleting data.
         Repository.Init(path);
 
-        using (var repo = new Repository(path)) {
+        using (Repository repo = new Repository(path)) {
             // Force "main" as the default branch if the repo is empty (fresh init)
             if (!repo.Commits.Any()) {
                 // set HEAD to point to refs/heads/main
@@ -35,10 +38,11 @@ public class ProjectInitService {
             // Read existing version to sync meta.toml, but DO NOT modify package.json
             try {
                 string content = File.ReadAllText(packageJsonPath);
-                dynamic? json = JsonConvert.DeserializeObject(content);
-                if (json != null && json.version != null) {
-                    string v = json.version.ToString();
-                    var parts = v.Split('.');
+                JObject? json = JsonConvert.DeserializeObject<JObject>(content);
+                JToken? versionToken = json?["version"];
+                if (versionToken != null) {
+                    string v = versionToken.ToString();
+                    string[] parts = v.Split('.');
                     if (parts.Length >= 1) long.TryParse(parts[0], out major);
                     if (parts.Length >= 2) long.TryParse(parts[1], out minor);
                     if (parts.Length >= 3) long.TryParse(parts[2], out patch);
@@ -46,12 +50,12 @@ public class ProjectInitService {
             } catch { /* Ignore corrupt package.json */ }
         } else if (isNode) {
             // Create new package.json
-            var pkg = new {
-                name = new DirectoryInfo(path).Name.ToLower().Replace(" ", "-"),
-                version = "0.0.0",
-                description = "Initialized by BetterGit"
+            JObject pkg = new JObject {
+                ["name"] = new DirectoryInfo(path).Name.ToLower().Replace(" ", "-"),
+                ["version"] = "0.0.0",
+                ["description"] = "Initialized by BetterGit"
             };
-            File.WriteAllText(packageJsonPath, JsonConvert.SerializeObject(pkg, Formatting.Indented));
+            File.WriteAllText(packageJsonPath, JsonConvert.SerializeObject(value: pkg, formatting: Formatting.Indented));
         }
 
         // 4. Create the "BetterGit" Metadata (.betterGit/meta.toml)
@@ -63,7 +67,7 @@ public class ProjectInitService {
         string metaFile = Path.Combine(betterGitDir, "meta.toml");
 
         if (!File.Exists(metaFile)) {
-            var toml = new TomlTable {
+            TomlTable toml = new TomlTable {
                 ["major"] = major,
                 ["minor"] = minor,
                 ["patch"] = patch,
@@ -89,4 +93,7 @@ public class ProjectInitService {
         Console.WriteLine($"BetterGit initialized in: {path}");
         Console.WriteLine("Ready for first Save.");
     }
+
+    /* :: :: Public API :: END :: */
 }
+

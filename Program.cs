@@ -2,7 +2,9 @@
 namespace BetterGit;
 
 class Program {
-    static void Main(String[] args) {
+    /* :: :: Entry Point :: START :: */
+
+    static void Main(string[] args) {
         if (args.Length == 0 || args[0] == "-h" || args[0] == "--help") {
             PrintHelp();
             return;
@@ -10,7 +12,7 @@ class Program {
 
         // VS Code sets the "Current Working Directory" to the user's project folder.
         // We use this to find the repository.
-        String repoPath = Directory.GetCurrentDirectory();
+        string repoPath = Directory.GetCurrentDirectory();
 
         // Check for --path argument
         for (int i = 0; i < args.Length; i++) {
@@ -20,7 +22,7 @@ class Program {
             }
         }
 
-        var manager = new RepositoryManager(repoPath);
+        RepositoryManager manager = new RepositoryManager(repoPath);
 
         try {
             switch (args[0].ToLower()) {
@@ -40,11 +42,11 @@ class Program {
 
                 case "init":
                     // If no path provided, use current directory
-                    String targetPath = Directory.GetCurrentDirectory();
-                    Boolean isNode = false;
+                    string targetPath = Directory.GetCurrentDirectory();
+                    bool isNode = false;
 
                     // Simple arg parsing
-                    foreach (var arg in args.Skip(1)) {
+                    foreach (string arg in args.Skip(1)) {
                         if (arg.Equals("--node", StringComparison.OrdinalIgnoreCase)) {
                             isNode = true;
                         } else if (!arg.StartsWith("-")) {
@@ -134,6 +136,10 @@ class Program {
         }
     }
 
+    /* :: :: Entry Point :: END :: */
+    // //
+    /* :: :: Helpers :: START :: */
+
     static void PrintHelp() {
         Console.WriteLine("BetterGit - A simplified Git wrapper");
         Console.WriteLine("Usage: BetterGit <command> [arguments]");
@@ -148,4 +154,6 @@ class Program {
         Console.WriteLine("  cat-file <sha> <path>  Print file content");
         Console.WriteLine("  -h, --help             Show this help message");
     }
+
+    /* :: :: Helpers :: END :: */
 }

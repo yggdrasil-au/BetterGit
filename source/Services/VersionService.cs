@@ -1,26 +1,25 @@
-using System;
-using System.IO;
-using System.Linq;
 using System.Text.RegularExpressions;
+
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+
 using Tomlyn;
 using Tomlyn.Model;
 
 namespace BetterGit;
 
-
-public enum VersionChangeType {
-    Patch,
-    Minor,
-    Major
-}
-
-public class VersionService {
+public class VersionService : IVersionService {
     private readonly string _repoPath;
+
+    /* :: :: Constructors :: START :: */
 
     public VersionService(string repoPath) {
         _repoPath = repoPath;
     }
+
+    /* :: :: Constructors :: END :: */
+    // //
+    /* :: :: Methods :: START :: */
 
     public string IncrementVersion(VersionChangeType changeType = VersionChangeType.Patch) {
         // This creates/updates a '.betterGit/meta.toml' file
@@ -39,7 +38,7 @@ public class VersionService {
         if (metaExists) {
             try {
                 string content = File.ReadAllText(metaFile);
-                var model = Toml.ToModel(content);
+                TomlTable model = Toml.ToModel(content);
                 
                 // Migration from old single 'version' field
                 if (model.ContainsKey("version") && !model.ContainsKey("patch")) {
@@ -58,14 +57,20 @@ public class VersionService {
             if (File.Exists(packageJsonPath)) {
                 try {
                     string content = File.ReadAllText(packageJsonPath);
-                    dynamic? json = JsonConvert.DeserializeObject(content);
-                    if (json != null && json.version != null) {
-                        string v = json.version.ToString();
+                    JObject? json = JsonConvert.DeserializeObject<JObject>(content);
+                    JToken? versionToken = json?["version"];
+                    if (versionToken != null) {
+                        string v = versionToken.ToString();
                         // Handle suffixes
-                        if (v.EndsWith("-A")) { isAlpha = true; v = v.Substring(0, v.Length - 2); }
-                        else if (v.EndsWith("-B")) { isBeta = true; v = v.Substring(0, v.Length - 2); }
+                        if (v.EndsWith("-A")) {
+                            isAlpha = true;
+                            v = v.Substring(0, v.Length - 2);
+                        } else if (v.EndsWith("-B")) {
+                            isBeta = true;
+                            v = v.Substring(0, v.Length - 2);
+                        }
                         
-                        var parts = v.Split('.');
+                        string[] parts = v.Split('.');
                         if (parts.Length >= 1) long.TryParse(parts[0], out major);
                         if (parts.Length >= 2) long.TryParse(parts[1], out minor);
                         if (parts.Length >= 3) long.TryParse(parts[2], out patch);
@@ -88,7 +93,7 @@ public class VersionService {
         }
 
         // 3. Write TOML
-        var toml = new TomlTable {
+        TomlTable toml = new TomlTable {
             ["major"] = major,
             ["minor"] = minor,
             ["patch"] = patch,
@@ -108,7 +113,7 @@ public class VersionService {
                 string content = File.ReadAllText(pkgPath);
                 // Regex to find "version": "..." and replace it, preserving whitespace
                 string pattern = "(\"version\"\\s*:\\s*\")(.*?)(\")";
-                var regex = new Regex(pattern);
+                Regex regex = new Regex(pattern);
                 
                 // Only replace the first occurrence
                 string newContent = regex.Replace(content, $"${{1}}{versionString}$3", 1);
@@ -127,14 +132,14 @@ public class VersionService {
         }
 
         string metaFile = Path.Combine(betterGitDir, "meta.toml");
-        var toml = new TomlTable();
+        TomlTable toml = new TomlTable();
 
         // Read existing to preserve version numbers
         if (File.Exists(metaFile)) {
             try {
                 string content = File.ReadAllText(metaFile);
-                var model = Toml.ToModel(content);
-                foreach (var kvp in model) {
+                TomlTable model = Toml.ToModel(content);
+                foreach (KeyValuePair<string, object> kvp in model) {
                     toml[kvp.Key] = kvp.Value;
                 }
             } catch { }
@@ -144,11 +149,16 @@ public class VersionService {
         toml["isAlpha"] = false;
         toml["isBeta"] = false;
 
-        if (channel.ToLower() == "alpha") toml["isAlpha"] = true;
-        else if (channel.ToLower() == "beta") toml["isBeta"] = true;
+        if (channel.ToLower() == "alpha") {
+            toml["isAlpha"] = true;
+        } else if (channel.ToLower() == "beta") {
+            toml["isBeta"] = true;
+        }
 
         File.WriteAllText(metaFile, Toml.FromModel(toml));
         Console.WriteLine($"Channel set to: {channel}");
     }
+
+    /* :: :: Methods :: END :: */
 }
 

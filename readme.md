@@ -1,6 +1,6 @@
-# BetterGit CLI (BetterGitNet)
+# BetterGit CLI
 
-The core engine for BetterGit, built with .NET 9.0 and `LibGit2Sharp`. This console application handles all the heavy lifting for repository management, versioning, and safe history traversal.
+The core engine for BetterGit, built with .NET and `LibGit2Sharp`. This console application handles all the heavy lifting for repository management, versioning, and safe history traversal.
 
 the core concept is to simplify version control by eliminating standard Git complexities i dont need
 instead using it as a non-destructive save/load/backup system.
@@ -9,7 +9,7 @@ all whithout preventing the user from using git directly if they want to.
 
 
 ## Prerequisites
-* .NET 9.0 SDK
+* .NET 10.0 SDK
 
 ## Building
 ```pwsh
