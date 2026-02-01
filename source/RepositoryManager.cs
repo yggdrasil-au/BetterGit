@@ -32,6 +32,10 @@ public partial class RepositoryManager {
         ProjectInitService.InitProject(path, isNode);
     }
 
+    public static void AddSafeDirectory(string path) {
+        RunGitOrThrow(Path.GetDirectoryName(path) ?? path, $"config --global --add safe.directory \"{path.Replace("\\", "/")}\"");
+    }
+
     public void SetChannel(string channel) {
         _versionService.SetChannel(channel);
     }

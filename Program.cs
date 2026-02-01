@@ -210,6 +210,14 @@ class Program {
                     manager.Merge(args[1]);
                     break;
 
+                case "add-safe-directory":
+                    // usage: BetterGit.exe add-safe-directory <path>
+                    if (args.Length < 2) {
+                        throw new Exception("Path required.");
+                    }
+                    RepositoryManager.AddSafeDirectory(args[1]);
+                    break;
+
                 case "set-channel":
                     // usage: BetterGit.exe set-channel [alpha|beta|stable]
                     if (args.Length < 2) {
