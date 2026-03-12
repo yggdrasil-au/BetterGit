@@ -30,29 +30,32 @@ public partial class RepositoryManager {
                 return;
             }
 
-            // Auto-generate message if empty
+            // Generate final message format
+            List<(string path, string status)> entries = GetChangesSafe(repo, _repoPath, includeUntracked: true);
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+
             if (string.IsNullOrWhiteSpace(message)) {
-                System.Text.StringBuilder sb = new System.Text.StringBuilder();
-                List<(string path, string status)> entries = GetChangesSafe(repo, _repoPath, includeUntracked: true);
                 sb.AppendLine($"changes: {entries.Count}");
-                sb.AppendLine();
-                sb.AppendLine("Files changed in this commit:");
-
-                foreach ((string path, string status) entry in entries) {
-                    string stateStr = "modified";
-                    string s = entry.status;
-                    if (s.Contains("New") || s.Contains("Added")) {
-                        stateStr = "added";
-                    } else if (s.Contains("Deleted")) {
-                        stateStr = "deleted";
-                    } else if (s.Contains("Renamed")) {
-                        stateStr = "renamed";
-                    }
-
-                    sb.AppendLine($"\t{stateStr}:   {entry.path}");
-                }
-                message = sb.ToString();
+            } else {
+                sb.AppendLine($"changes: {entries.Count}, {message}");
             }
+
+            sb.AppendLine("Files changed in this commit:");
+
+            foreach ((string path, string status) entry in entries) {
+                string stateStr = "modified";
+                string s = entry.status;
+                if (s.Contains("New") || s.Contains("Added")) {
+                    stateStr = "added";
+                } else if (s.Contains("Deleted")) {
+                    stateStr = "deleted";
+                } else if (s.Contains("Renamed")) {
+                    stateStr = "renamed";
+                }
+
+                sb.AppendLine($"\t{stateStr}:   {entry.path}");
+            }
+            message = sb.ToString().TrimEnd();
 
             // 3. Update Version
             string version = _versionService.IncrementVersion(changeType, manualVersion);
