@@ -40,3 +40,6 @@ dotnet build
     BetterGit.exe get-tree-data
     ```
 
+## Notice
+
+This project was generated entirely with AI.
