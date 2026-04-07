@@ -65,6 +65,8 @@ public sealed class RemoteService {
             }
             string providerValue = provider ?? "other";
 
+            string? branch = meta?.Branch;
+
             string? group = meta?.Group;
             if (string.IsNullOrWhiteSpace(group)) {
                 group = "Ungrouped";
@@ -80,6 +82,7 @@ public sealed class RemoteService {
                 FetchUrl = fetchUrl,
                 PushUrl = pushUrl,
                 Provider = providerValue,
+                Branch = branch,
                 Group = groupValue,
                 IsPublic = isPublic,
                 HasGitRemote = hasGitRemote,
@@ -94,7 +97,7 @@ public sealed class RemoteService {
     /// <summary>
     /// Sets BetterGit metadata for a remote in <c>.betterGit/project.toml</c>. Creates the remote metadata entry if missing.
     /// </summary>
-    public void SetRemoteMetadata(string name, string? group, string? provider, bool? isPublic) {
+    public void SetRemoteMetadata(string name, string? group, string? provider, bool? isPublic, string? branch = null) {
         if (string.IsNullOrWhiteSpace(name)) {
             throw new ArgumentException("Remote name is required.", nameof(name));
         }
@@ -118,6 +121,9 @@ public sealed class RemoteService {
         if (isPublic.HasValue) {
             entry["isPublic"] = isPublic.Value;
         }
+        if (branch != null) {
+            entry["branch"] = branch;
+        }
 
         File.WriteAllText(projectFile, Toml.FromModel(model));
     }
@@ -126,6 +132,7 @@ public sealed class RemoteService {
         public string Name { get; init; } = string.Empty;
         public string Group { get; init; } = string.Empty;
         public string Provider { get; init; } = string.Empty;
+        public string Branch { get; init; } = string.Empty;
         public bool? IsPublic { get; init; }
     }
 
@@ -166,6 +173,7 @@ public sealed class RemoteService {
                 Name = name,
                 Group = ReadString(t, "group") ?? string.Empty,
                 Provider = ReadString(t, "provider") ?? string.Empty,
+                Branch = ReadString(t, "branch") ?? string.Empty,
                 IsPublic = ReadBool(t, "isPublic")
             };
         }

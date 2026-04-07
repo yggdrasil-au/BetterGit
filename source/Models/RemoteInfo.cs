@@ -30,6 +30,11 @@ public sealed class RemoteInfo {
     public string Provider { get; init; } = "other";
 
     /// <summary>
+    /// The BetterGit branch name for publishing, if any.
+    /// </summary>
+    public string? Branch { get; init; }
+
+    /// <summary>
     /// Whether BetterGit considers this remote public.
     /// </summary>
     public bool IsPublic { get; init; }

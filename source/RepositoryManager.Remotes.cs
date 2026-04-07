@@ -18,6 +18,7 @@ public partial class RepositoryManager {
             pushUrl = r.PushUrl,
             group = r.Group,
             provider = r.Provider,
+            branch = r.Branch,
             isPublic = r.IsPublic,
             hasGitRemote = r.HasGitRemote,
             hasMetadata = r.HasMetadata,
@@ -41,17 +42,17 @@ public partial class RepositoryManager {
     /// <summary>
     /// Sets BetterGit metadata for a remote in <c>.betterGit/project.toml</c>.
     /// </summary>
-    public void SetRemoteMetadata(string name, string? group, string? provider, bool? isPublic) {
+    public void SetRemoteMetadata(string name, string? group, string? provider, bool? isPublic, string? branch = null) {
         if (!IsValidGitRepo()) {
             throw new Exception("Not a valid BetterGit repository. Run 'init' first.");
         }
-        _remoteService.SetRemoteMetadata(name, group, provider, isPublic);
+        _remoteService.SetRemoteMetadata(name, group, provider, isPublic, branch);
     }
 
     /// <summary>
     /// Adds a Git remote and stores the corresponding BetterGit metadata.
     /// </summary>
-    public void AddRemote(string name, string url, string? group, string? provider, bool? isPublic) {
+    public void AddRemote(string name, string url, string? group, string? provider, bool? isPublic, string? branch = null) {
         if (string.IsNullOrWhiteSpace(name)) {
             throw new ArgumentException("Remote name is required.", nameof(name));
         }
@@ -77,7 +78,7 @@ public partial class RepositoryManager {
             providerValue = GuessProviderFromUrl(url);
         }
 
-        _remoteService.SetRemoteMetadata(name, group, providerValue, isPublic);
+        _remoteService.SetRemoteMetadata(name, group, providerValue, isPublic, branch);
     }
 
     private static string GuessProviderFromUrl(string url) {

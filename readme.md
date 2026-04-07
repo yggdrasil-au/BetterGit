@@ -41,9 +41,13 @@ dotnet build
     ```
 *   **Add Remote Mirror:**
     ```pwsh
-    BetterGit.exe remote add <name> <url> [--group <g>] [--provider <p>] [--public|--private]
+    BetterGit.exe remote add <name> <url> [--group <g>] [--provider <p>] [--branch <b>] [--public|--private]
     ```
     *Creates a Git remote and stores the matching BetterGit metadata in `.betterGit/project.toml`.*
+*   **Change Remote Metadata:**
+    ```pwsh
+    BetterGit.exe remote set-meta <name> [--group <g>] [--provider <p>] [--branch <b>] [--public|--private]
+    ```
 
 ## Notice
 

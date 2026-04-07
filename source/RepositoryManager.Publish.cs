@@ -44,9 +44,13 @@ public partial class RepositoryManager {
             foreach (RemoteInfo remote in targets) {
                 Console.WriteLine($"Publishing to {remote.Name}...");
 
-                string branchName = repo.Head.FriendlyName;
+                string localBranchName = repo.Info.IsHeadDetached ? "HEAD" : repo.Head.FriendlyName;
+                string remoteBranchName = string.IsNullOrWhiteSpace(remote.Branch) ? localBranchName : remote.Branch;
+                string pushSpec = remoteBranchName.Equals(localBranchName, StringComparison.OrdinalIgnoreCase)
+                    ? localBranchName
+                    : $"{localBranchName}:{remoteBranchName}";
 
-                ProcessStartInfo processInfo = new ProcessStartInfo(fileName: "git", arguments: $"push {remote.Name} {branchName}") {
+                ProcessStartInfo processInfo = new ProcessStartInfo(fileName: "git", arguments: $"push {remote.Name} {pushSpec}") {
                     WorkingDirectory = _repoPath,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
