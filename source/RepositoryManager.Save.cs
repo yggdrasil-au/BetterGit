@@ -11,13 +11,13 @@ public partial class RepositoryManager {
             throw new Exception("Not a valid BetterGit repository. Run 'init' first.");
         }
 
-        using (Repository? repo = new Repository(_repoPath)) {
+        using (Repository repo = new Repository(_repoPath)) {
             // 1. Stage all changes (Automatic "git add -A")
             // LibGit2Sharp can throw on Windows when long paths exist (often in untracked files).
             try {
                 Commands.Stage(repo, "*");
             } catch (Exception ex) {
-                if (IsPathTooLongError(ex)) {
+                if (ShouldFallbackToGitCli(ex)) {
                     RunGitOrThrow(_repoPath, "add -A");
                 } else {
                     throw;

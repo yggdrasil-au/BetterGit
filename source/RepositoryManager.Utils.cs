@@ -10,7 +10,7 @@ public partial class RepositoryManager {
     // --- PRIVATE HELPERS ---
 
     private void EnsureSafeState() {
-        using (Repository? repo = new Repository(_repoPath)) {
+        using (Repository repo = new Repository(_repoPath)) {
             if (IsRepoDirtySafe(repo, _repoPath)) {
                 throw new Exception("Unsaved changes detected. You must 'Save' before moving or undoing.");
             }
@@ -21,8 +21,25 @@ public partial class RepositoryManager {
         if (ex is PathTooLongException) {
             return true;
         }
-        string msg = ex.Message ?? string.Empty;
+        string msg = ex.Message;
         return msg.Contains("path too long", StringComparison.OrdinalIgnoreCase) || msg.Contains("PathTooLong", StringComparison.OrdinalIgnoreCase);
+    }
+
+    // LibGit2Sharp can reject uncommon working-tree entries such as type changes and symbolic-link transitions
+    // even when git CLI can still read them. When that happens, we fall back to the git executable so BetterGit
+    // stays usable instead of surfacing a hard error.
+    private static bool ShouldFallbackToGitCli(Exception ex) {
+        if (IsPathTooLongError(ex)) {
+            return true;
+        }
+
+        string msg = ex.Message;
+        return msg.Contains("unexpected ChangeKind", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("ChangeKind", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("TypeChanged", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("SymbolicLink", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("symbolic link", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("symlink", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsRepoDirtySafe(Repository repo, string repoPath) {
@@ -33,11 +50,12 @@ public partial class RepositoryManager {
                 RecurseUntrackedDirs = false
             };
             return repo.RetrieveStatus(opts).IsDirty;
-        } catch (Exception ex) {
-            if (!IsPathTooLongError(ex)) {
+        } catch (Exception statusEx) {
+            if (!ShouldFallbackToGitCli(statusEx)) {
                 throw;
             }
-            // Fallback to git CLI, which can handle long paths if Git is configured appropriately.
+
+            // Fallback to git CLI, which can handle long paths and a few LibGit2Sharp edge cases more gracefully.
             (int exitCode, string stdout, string stderr) = RunGit(repoPath, "status --porcelain");
             if (exitCode != 0) {
                 return true;
@@ -58,11 +76,11 @@ public partial class RepositoryManager {
                 .Select(s => (path: s.FilePath, status: s.State.ToString()))
                 .ToList();
         } catch (Exception ex) {
-            if (!IsPathTooLongError(ex)) {
+            if (!ShouldFallbackToGitCli(ex)) {
                 throw;
             }
 
-            // Retry without untracked files (most common cause of long-path issues)
+            // Retry without untracked files first, then fall back to git CLI if LibGit2Sharp still rejects the tree.
             try {
                 StatusOptions opts = new StatusOptions {
                     IncludeUntracked = false,
@@ -73,7 +91,11 @@ public partial class RepositoryManager {
                     .Where(s => s.State != FileStatus.Ignored)
                     .Select(s => (path: s.FilePath, status: s.State.ToString()))
                     .ToList();
-            } catch {
+            } catch (Exception statusEx) {
+                if (!ShouldFallbackToGitCli(statusEx)) {
+                    throw;
+                }
+
                 // Final fallback: git status porcelain
                 return GetChangesFromGit(repoPath);
             }
@@ -125,12 +147,16 @@ public partial class RepositoryManager {
     }
 
     private static void RunGitOrThrow(string repoPath, string args) {
-        (int exitCode, string stdout, string stderr) = RunGit(repoPath, args);
+        (int exitCode, _, string stderr) = RunGit(repoPath, args);
         if (exitCode != 0) {
             throw new Exception(string.IsNullOrWhiteSpace(stderr) ? "git command failed." : stderr.Trim());
         }
     }
 
+    /// <summary>
+    /// Adds a safe.directory config for the specified path, which is necessary for git CLI operations to work on repos that are owned by other users (for example, when running BetterGit as admin
+    /// but the repo is owned by a standard user). This is a static method because users may need to call it before the RepositoryManager instance can be initialized.
+    /// </summary>
     private static (int exitCode, string stdout, string stderr) RunGit(string repoPath, string args) {
         ProcessStartInfo psi = new ProcessStartInfo(fileName: "git", arguments: args) {
             WorkingDirectory = repoPath,
@@ -155,14 +181,14 @@ public partial class RepositoryManager {
 
     internal string ExtractVersion(string msg) {
         if (msg.StartsWith("[") && msg.Contains("]")) {
-            return msg.Substring(1, msg.IndexOf("]") - 1);
+            return msg.Substring(1, msg.IndexOf(']') - 1);
         }
         return "v?"; // no version exists, often means commit made outside BetterGit
     }
 
     private string ExtractMessage(string msg) {
         if (msg.StartsWith("[") && msg.Contains("]")) {
-            return msg.Substring(msg.IndexOf("]") + 1).Trim();
+            return msg.Substring(msg.IndexOf(']') + 1).Trim();
         }
         return msg;
     }
